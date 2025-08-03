@@ -19,24 +19,29 @@ class WebSocketManager:
         # Store active connections: user_id -> WebSocket
         self.active_connections: Dict[str, WebSocket] = {}
         
+        # Store user roles: user_id -> role
+        self.user_roles: Dict[str, str] = {}
+        
         # Store channel subscriptions: channel -> set of user_ids
         self.channel_subscriptions: Dict[str, Set[str]] = {}
         
         # Store user subscriptions: user_id -> set of channels
         self.user_subscriptions: Dict[str, Set[str]] = {}
     
-    async def connect(self, websocket: WebSocket, user_id: str):
+    async def connect(self, websocket: WebSocket, user_id: str, role: str = "student"):
         """Accept a WebSocket connection"""
         await websocket.accept()
         self.active_connections[user_id] = websocket
+        self.user_roles[user_id] = role
         self.user_subscriptions[user_id] = set()
         
-        logger.info(f"WebSocket connected for user: {user_id}")
+        logger.info(f"WebSocket connected for user: {user_id} (role: {role})")
         
         # Send welcome message
         await self.send_to_user(user_id, {
             "type": "connection_established",
             "user_id": user_id,
+            "role": role,
             "timestamp": datetime.utcnow().isoformat(),
             "message": "Real-time analytics connection established"
         })
@@ -100,6 +105,22 @@ class WebSocketManager:
                     await websocket.send_text(json.dumps(message))
                 except Exception as e:
                     logger.error(f"Error sending to user {user_id} on channel {channel}: {str(e)}")
+                    disconnected_users.append(user_id)
+        
+        # Clean up disconnected users
+        for user_id in disconnected_users:
+            self.disconnect(user_id)
+    
+    async def broadcast_to_role(self, role: str, message: Dict[str, Any]):
+        """Broadcast a message to all users with a specific role"""
+        disconnected_users = []
+        
+        for user_id, websocket in self.active_connections.items():
+            if self.user_roles.get(user_id) == role:
+                try:
+                    await websocket.send_text(json.dumps(message))
+                except Exception as e:
+                    logger.error(f"Error broadcasting to {role} user {user_id}: {str(e)}")
                     disconnected_users.append(user_id)
         
         # Clean up disconnected users

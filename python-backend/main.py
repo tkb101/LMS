@@ -22,9 +22,12 @@ from app.core.database import engine, SessionLocal
 from app.core.redis_client import redis_client
 from app.models import Base
 from app.api.routes import analytics, recommendations, predictions, integrations, websocket_routes
+from app.api.routes.realtime_analytics import router as realtime_router
 from app.services.gemini_service import GeminiService
 from app.services.analytics_service import AnalyticsService
 from app.services.websocket_manager import WebSocketManager
+from app.services.realtime_analytics import RealTimeAnalyticsService
+from app.services.google_classroom_service import GoogleClassroomService
 from app.services.background_tasks import start_background_tasks
 
 # Load environment variables
@@ -38,6 +41,8 @@ logger = logging.getLogger(__name__)
 websocket_manager = WebSocketManager()
 analytics_service = AnalyticsService()
 gemini_service = GeminiService()
+realtime_analytics_service = RealTimeAnalyticsService()
+classroom_service = GoogleClassroomService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,6 +63,14 @@ async def lifespan(app: FastAPI):
     # Initialize AI services
     await gemini_service.initialize()
     logger.info("Gemini AI service initialized")
+    
+    # Initialize real-time analytics
+    await realtime_analytics_service.initialize()
+    logger.info("Real-time analytics service initialized")
+    
+    # Initialize Google Classroom integration
+    await classroom_service.initialize()
+    logger.info("Google Classroom service initialized")
     
     yield
     
@@ -95,6 +108,7 @@ app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytic
 app.include_router(recommendations.router, prefix="/api/v1/recommendations", tags=["Recommendations"])
 app.include_router(predictions.router, prefix="/api/v1/predictions", tags=["Predictions"])
 app.include_router(integrations.router, prefix="/api/v1/integrations", tags=["Integrations"])
+app.include_router(realtime_router, prefix="/api/v1/realtime-analytics", tags=["Real-time Analytics"])
 
 @app.get("/")
 async def root():
@@ -134,9 +148,9 @@ async def health_check():
 
 # WebSocket endpoint for real-time analytics
 @app.websocket("/ws/analytics/{user_id}")
-async def websocket_analytics(websocket: WebSocket, user_id: str):
+async def websocket_analytics(websocket: WebSocket, user_id: str, role: str = "student"):
     """WebSocket endpoint for real-time analytics updates"""
-    await websocket_manager.connect(websocket, user_id)
+    await websocket_manager.connect(websocket, user_id, role)
     try:
         while True:
             # Keep connection alive and handle incoming messages
@@ -152,7 +166,7 @@ async def websocket_analytics(websocket: WebSocket, user_id: str):
             elif message.get("type") == "track_event":
                 # Track user events in real-time
                 event_data = message.get("data", {})
-                await analytics_service.track_event(user_id, event_data)
+                await realtime_analytics_service.track_live_event(user_id, event_data)
                 
     except WebSocketDisconnect:
         websocket_manager.disconnect(user_id)
